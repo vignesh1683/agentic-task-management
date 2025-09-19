@@ -71,20 +71,20 @@ export default function HomePage() {
 
   return (
     <div className="h-screen flex">
+      {/* Chat Interface */}
+      <div className="w-1/4 border-r border-gray-200 shadow">
+        <ChatInterface
+          messages={messages}
+          onMessageSent={handleMessageSent}
+          isConnected={isConnected}
+        />
+      </div>
+
       {/* Task List */}
       <div className="flex-1">
         <TaskList
           tasks={tasks}
           onTaskUpdate={handleTaskUpdate}
-        />
-      </div>
-
-      {/* Chat Interface */}
-      <div className="w-1/4 border-r border-gray-200">
-        <ChatInterface
-          messages={messages}
-          onMessageSent={handleMessageSent}
-          isConnected={isConnected}
         />
       </div>
     </div>

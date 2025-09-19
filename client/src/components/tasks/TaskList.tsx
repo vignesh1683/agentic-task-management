@@ -9,42 +9,43 @@ interface TaskListProps {
 }
 
 export default function TaskList({ tasks, onTaskUpdate }: TaskListProps) {
-  const groupedTasks = {
-    in_progress: tasks.filter(task => task.status === 'IN_PROGRESS'),
-    completed: tasks.filter(task => task.status === 'COMPLETED'),
-    overdue: tasks.filter(task => task.status === 'OVERDUE'),
-    archived: tasks.filter(task => task.status === 'ARCHIVED'),
+  const grouped = {
+    in_progress: tasks.filter(t => t.status === 'IN_PROGRESS'),
+    completed: tasks.filter(t => t.status === 'COMPLETED'),
+    overdue: tasks.filter(t => t.status === 'OVERDUE'),
+    archived: tasks.filter(t => t.status === 'ARCHIVED'),
   };
 
-  const statusColumns = [
-    { key: 'in_progress', title: 'In Progress', color: 'border-blue-200' },
-    { key: 'completed', title: 'Completed', color: 'border-green-200' },
-    { key: 'overdue', title: 'Overdue', color: 'border-red-200' },
-    { key: 'archived', title: 'Archived', color: 'border-gray-300' },
-  ];
+  const columns = [
+    { key: 'in_progress', title: 'In Progress', border: 'border-blue-300' },
+    { key: 'completed', title: 'Completed', border: 'border-green-300' },
+    { key: 'overdue', title: 'Overdue', border: 'border-red-300' },
+    { key: 'archived', title: 'Archived', border: 'border-gray-400' },
+  ] as const;
 
   return (
-    <div className="p-6 bg-gray-50 min-h-screen">
-      <h1 className="text-2xl font-bold text-gray-900 mb-6">Task Management</h1>
-      
+    <div className="p-6 bg-[var(--bg-primary)] text-[var(--text-primary)] min-h-screen">
+      <h1 className="text-2xl font-bold mb-6">Task Management</h1>
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {statusColumns.map(column => (
-          <div key={column.key} className={`bg-white rounded-lg border-2 ${column.color} p-4`}>
-            <h2 className="text-lg font-semibold text-gray-800 mb-4 capitalize">
-              {column.title} ({groupedTasks[column.key as keyof typeof groupedTasks].length})
+        {columns.map(c => (
+          <div
+            key={c.key}
+            className={`
+              bg-[var(--bg-secondary)] rounded-lg p-4
+              border-2 ${c.border} shadow
+            `}
+          >
+            <h2 className="text-lg font-semibold mb-4">
+              {c.title} ({grouped[c.key].length})
             </h2>
-            
+
             <div className="space-y-3">
-              {groupedTasks[column.key as keyof typeof groupedTasks].map(task => (
-                <TaskItem 
-                  key={task.id} 
-                  task={task} 
-                  onUpdate={onTaskUpdate}
-                />
+              {grouped[c.key].map(task => (
+                <TaskItem key={task.id} task={task} onUpdate={onTaskUpdate} />
               ))}
-              
-              {groupedTasks[column.key as keyof typeof groupedTasks].length === 0 && (
-                <p className="text-gray-500 text-sm italic">No tasks</p>
+              {grouped[c.key].length === 0 && (
+                <p className="text-sm italic text-[var(--text-secondary)]">No tasks</p>
               )}
             </div>
           </div>
