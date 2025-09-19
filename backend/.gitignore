@@ -1,0 +1,13 @@
+# Virtual environment
+venv/
+env/
+ENV/
+.venv/
+
+# Environment variables
+.env
+
+# Python cache files
+.task-management-ai-guide.md
+.test_tools.py
+.test.py
