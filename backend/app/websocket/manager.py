@@ -19,13 +19,13 @@ class ConnectionManager:
     async def broadcast(self, message: dict):
         message_str = json.dumps(message)
         disconnected = []
-        
+
         for connection in self.active_connections:
             try:
                 await connection.send_text(message_str)
             except Exception:
                 disconnected.append(connection)
-                
+
         for connection in disconnected:
             self.disconnect(connection)
 
