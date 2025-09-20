@@ -11,7 +11,7 @@ export default function HomePage() {
   const [isConnected, setIsConnected] = useState(false);
 
   useEffect(() => {
-    const websocket = new WebSocket('wss://agentic-task-management-zy2s.vercel.app/ws/chat');
+    const websocket = new WebSocket(`wss://agentic-task-management.onrender.com/ws/chat`);
     websocket.onopen = () => {
       setIsConnected(true);
       setMessages(prev => [
