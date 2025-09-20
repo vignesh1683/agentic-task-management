@@ -28,6 +28,10 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup_event():
     await init_db()
+    
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"}
 
 
 def serialize_tasks(tasks: List[Task]) -> List[Dict]:
