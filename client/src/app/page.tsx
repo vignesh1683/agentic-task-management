@@ -11,7 +11,7 @@ export default function HomePage() {
   const [isConnected, setIsConnected] = useState(false);
 
   useEffect(() => {
-    const websocket = new WebSocket('ws://localhost:8000/ws/chat');
+    const websocket = new WebSocket('wss://agentic-task-management-zy2s.vercel.app/ws/chat');
     websocket.onopen = () => {
       setIsConnected(true);
       setMessages(prev => [
@@ -57,7 +57,7 @@ export default function HomePage() {
   };
 
   return (
-    <div className="h-screen flex">
+    <div className="h-screen flex bg-[var(--bg-primary)]">
       <div className="w-1/4 border-r border-gray-200 shadow overflow-hidden">
         <ChatInterface
           messages={messages}
