@@ -8,14 +8,14 @@ from langchain_core.messages import SystemMessage
 from app.agent.tools import create_task, update_task, delete_task, list_tasks, filter_tasks, check_duplicate
 
 # ─────────────────────────────
-# 1️⃣  Extended state with memory
+# 1️ Extended state with memory
 # ─────────────────────────────
 class TaskState(MessagesState):
     # running memory of the conversation
     memory: str = ""
 
 # ─────────────────────────────
-# 2️⃣  Gemini model with tools
+# 2  Gemini model with tools
 # ─────────────────────────────
 llm = ChatGoogleGenerativeAI(
     model="gemini-2.0-flash",
@@ -28,14 +28,14 @@ llm_with_tools = llm.bind_tools(tools)
 tool_node = ToolNode(tools)
 
 # ─────────────────────────────
-# 3️⃣  Conditional routing
+# 3  Conditional routing
 # ─────────────────────────────
 def should_continue(state: TaskState):
     last_message = state["messages"][-1]
     return "tools" if last_message.tool_calls else END
 
 # ─────────────────────────────
-# 4️⃣  Agent call with memory
+# 4  Agent call with memory
 # ─────────────────────────────
 def call_model(state: TaskState):
     messages = state["messages"]
@@ -208,7 +208,7 @@ def call_model(state: TaskState):
     return {"messages": [response], "memory": state["memory"]}
 
 # ─────────────────────────────
-# 5️⃣  Build the graph
+# 5  Build the graph
 # ─────────────────────────────
 workflow = StateGraph(TaskState)
 workflow.add_node("agent", call_model)
