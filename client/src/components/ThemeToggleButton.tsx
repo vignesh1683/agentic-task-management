@@ -11,19 +11,17 @@ export default function ThemeToggleButton() {
       type="button"
       onClick={toggleTheme}
       aria-label="Toggle dark mode"
-      className="absolute top-4 right-4 rounded px-3 py-1 text-sm
-                 border border-gray-300 dark:border-gray-600
-                 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100
-                 hover:bg-gray-100 dark:hover:bg-gray-700 transition"
+      className="w-9 h-9 rounded-xl flex items-center justify-center transition-all duration-300 hover:scale-105"
+      style={{
+        background: 'var(--bg-tertiary)',
+        color: 'var(--text-secondary)',
+        border: '1px solid var(--border-color)',
+      }}
     >
       {theme === 'light' ? (
-        <div className="flex items-center gap-2">
-          <Moon size={16} /> Dark
-        </div>
+        <Moon size={16} className="transition-transform duration-300" />
       ) : (
-        <div className="flex items-center gap-2">
-          <Sun size={16} /> Light
-        </div>
+        <Sun size={16} className="transition-transform duration-300" />
       )}
     </button>
   );

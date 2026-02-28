@@ -1,23 +1,26 @@
-# Stage 1: Build the frontend
-FROM node:18-alpine AS builder
+# Frontend Dockerfile — Next.js standalone build
+FROM node:20-alpine AS builder
 
-# Set working directory
 WORKDIR /app
-
-# Install dependencies and build the app
-COPY package.json package-lock.json ./
-RUN npm install
+COPY package.json package-lock.json* ./
+RUN npm ci
 COPY . .
 RUN npm run build
 
-# Stage 2: Serve the built files with Nginx
-FROM nginx:alpine
+FROM node:20-alpine
 
-# Copy built files to Nginx's default directory
-COPY --from=builder /app/out /usr/share/nginx/html
+WORKDIR /app
+RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001
 
-# Expose the default Nginx port
-EXPOSE 80
+# Copy standalone output
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
 
-# Start Nginx
-CMD ["nginx", "-g", "daemon off;"]
+USER nextjs
+EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD wget -qO- http://localhost:3000/ || exit 1
+
+CMD ["node", "server.js"]

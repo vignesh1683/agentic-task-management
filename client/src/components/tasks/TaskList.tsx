@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Task } from '@/types/task';
 import TaskItem from './TaskItem';
-import { LayoutList, LayoutGrid } from 'lucide-react';
+import { LayoutList, LayoutGrid, ListTodo, AlertTriangle, CheckCircle2, Archive } from 'lucide-react';
 
 interface TaskListProps {
   tasks: Task[];
@@ -11,7 +11,7 @@ interface TaskListProps {
 }
 
 export default function TaskList({ tasks, onTaskUpdate }: TaskListProps) {
-  const [view, setView] = useState<'list' | 'grid'>('list');
+  const [view, setView] = useState<'list' | 'grid'>('grid');
 
   const grouped = {
     in_progress: tasks.filter(t => t.status === 'inprogress'),
@@ -25,61 +25,126 @@ export default function TaskList({ tasks, onTaskUpdate }: TaskListProps) {
   };
 
   const columns = [
-    { key: 'in_progress', title: 'In Progress', border: 'border-blue-300' },
-    { key: 'overdue', title: 'Overdue', border: 'border-red-300' },
-    { key: 'completed', title: 'Completed', border: 'border-green-300' },
-    { key: 'archived', title: 'Archived', border: 'border-gray-400' },
-  ] as const;
+    {
+      key: 'in_progress' as const,
+      title: 'In Progress',
+      accent: '#6366f1',
+      bgAccent: 'rgba(99, 102, 241, 0.08)',
+      icon: <ListTodo size={16} />,
+    },
+    {
+      key: 'overdue' as const,
+      title: 'Overdue',
+      accent: '#ef4444',
+      bgAccent: 'rgba(239, 68, 68, 0.08)',
+      icon: <AlertTriangle size={16} />,
+    },
+    {
+      key: 'completed' as const,
+      title: 'Completed',
+      accent: '#22c55e',
+      bgAccent: 'rgba(34, 197, 94, 0.08)',
+      icon: <CheckCircle2 size={16} />,
+    },
+    {
+      key: 'archived' as const,
+      title: 'Archived',
+      accent: '#6b7280',
+      bgAccent: 'rgba(107, 114, 128, 0.08)',
+      icon: <Archive size={16} />,
+    },
+  ];
 
   return (
-    <div className="p-6 bg-[var(--bg-primary)] text-[var(--text-primary)] min-h-screen">
-      <div className="flex items-center gap-6 mb-6">
-        <h1 className="text-2xl font-bold">Task Management</h1>
+    <div className="p-6 min-h-full flex flex-col">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-5">
+        <h1 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
+          Task Board
+        </h1>
         <button
           onClick={() => setView(view === 'list' ? 'grid' : 'list')}
-          className="flex items-center gap-1 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+          className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-all duration-200"
+          style={{
+            color: 'var(--text-secondary)',
+            background: 'var(--bg-tertiary)',
+            border: '1px solid var(--border-color)',
+          }}
         >
           {view === 'list' ? (
             <>
-              <LayoutGrid size={18} /> Grid View
+              <LayoutGrid size={14} /> Grid
             </>
           ) : (
             <>
-              <LayoutList size={18} /> List View
+              <LayoutList size={14} /> List
             </>
           )}
         </button>
       </div>
 
-      <div className="flex flex-col gap-6 pb-4">
+      {/* Kanban Board — Horizontal Columns */}
+      <div
+        className={
+          view === 'grid'
+            ? 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 flex-1'
+            : 'flex flex-col gap-4 flex-1'
+        }
+      >
         {columns.map(c => (
           <div
             key={c.key}
-            className={`
-              flex-shrink-0 w-full max-h-1/5
-              bg-[var(--bg-secondary)]
-              border-2 ${c.border}
-              rounded-lg shadow
-              flex flex-col
-              max-h-[500px]
-            `}
+            className="flex flex-col rounded-xl overflow-hidden"
+            style={{
+              background: 'var(--bg-secondary)',
+              border: '1px solid var(--border-color)',
+              boxShadow: 'var(--shadow-sm)',
+            }}
           >
-            <div className="px-4 py-3 border-b border-[var(--border-color)] flex justify-between items-center">
-              <h2 className="text-lg font-semibold">
-                {c.title} ({grouped[c.key].length})
+            {/* Column Header */}
+            <div
+              className="px-4 py-3 flex items-center gap-2"
+              style={{ borderBottom: `2px solid ${c.accent}` }}
+            >
+              <span style={{ color: c.accent }}>{c.icon}</span>
+              <h2 className="text-sm font-semibold flex-1" style={{ color: 'var(--text-primary)' }}>
+                {c.title}
               </h2>
+              <span
+                className="text-xs font-bold px-2 py-0.5 rounded-full"
+                style={{
+                  background: c.bgAccent,
+                  color: c.accent,
+                }}
+              >
+                {grouped[c.key].length}
+              </span>
             </div>
 
+            {/* Column Body */}
             <div
-              className={`flex-1 overflow-y-auto p-4 ${
-                view === 'grid' ? 'grid grid-cols-3 md:grid-cols-4 gap-4' : 'space-y-4'
-              }`}
+              className={`flex-1 overflow-y-auto p-3 space-y-2.5 ${view === 'list' ? 'max-h-[260px]' : ''
+                }`}
+              style={{ minHeight: view === 'grid' ? '200px' : '80px' }}
             >
-              {grouped[c.key].map(task => (
-                <TaskItem key={task.id} task={task} onUpdate={onTaskUpdate} />
+              {grouped[c.key].map((task, idx) => (
+                <div
+                  key={task.id}
+                  className="animate-fade-in"
+                  style={{ animationDelay: `${idx * 50}ms` }}
+                >
+                  <TaskItem task={task} onUpdate={onTaskUpdate} />
+                </div>
               ))}
               {grouped[c.key].length === 0 && (
-                <p className="text-sm italic text-[var(--text-secondary)]">No tasks</p>
+                <div className="flex flex-col items-center justify-center py-8 opacity-40">
+                  <span style={{ color: c.accent }} className="mb-2 opacity-40">
+                    {c.icon}
+                  </span>
+                  <p className="text-xs italic" style={{ color: 'var(--text-tertiary)' }}>
+                    No tasks
+                  </p>
+                </div>
               )}
             </div>
           </div>

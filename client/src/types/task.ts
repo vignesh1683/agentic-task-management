@@ -1,3 +1,5 @@
+import { WorkflowStep } from '@/components/chat/WorkflowTracker';
+
 export interface Task {
   id: number;
   title: string;
@@ -13,4 +15,6 @@ export interface ChatMessage {
   type: 'user' | 'agent' | 'system';
   message: string;
   timestamp: Date;
+  latency_ms?: number;
+  workflowSteps?: WorkflowStep[];
 }

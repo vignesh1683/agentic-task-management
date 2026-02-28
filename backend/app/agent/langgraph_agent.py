@@ -1,222 +1,249 @@
+"""
+Multi-Agent LangGraph — Supervisor orchestrates Creator, Reader, Editor.
+
+Architecture (flat graph — no nested sub-graphs):
+    START → supervisor → (creator_agent | reader_agent | editor_agent) → tools → route_back → END
+"""
+
 from datetime import datetime, timedelta
+import re
 import os
+from dotenv import load_dotenv
+load_dotenv()
+
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode
+from langchain_groq import ChatGroq
+from langchain_core.messages import SystemMessage, AIMessage
+from app.agent.tools import create_task, update_task, delete_task, list_tasks, filter_tasks
+
+# ── Shared state ──
 from langgraph.graph.message import MessagesState
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import SystemMessage
-from app.agent.tools import create_task, update_task, delete_task, list_tasks, filter_tasks, check_duplicate
 
-# ─────────────────────────────
-# 1️ Extended state with memory
-# ─────────────────────────────
-class TaskState(MessagesState):
-    # running memory of the conversation
-    memory: str = ""
 
-# ─────────────────────────────
-# 2  Gemini model with tools
-# ─────────────────────────────
-llm = ChatGoogleGenerativeAI(
-    model="gemini-2.0-flash",
-    google_api_key=os.getenv("GEMINI_API_KEY"),
+class AgentState(MessagesState):
+    next_agent: str = ""
+    active_agent: str = ""
+
+
+# ── LLM ──
+llm = ChatGroq(
+    model="llama-3.3-70b-versatile",
+    api_key=os.getenv("GROQ_API_KEY"),
     temperature=0.1,
 )
 
-tools = [create_task, update_task, delete_task, list_tasks, filter_tasks, check_duplicate]
-llm_with_tools = llm.bind_tools(tools)
-tool_node = ToolNode(tools)
+# ── Tools ──
+all_tools = [create_task, update_task, delete_task, list_tasks, filter_tasks]
+creator_tools = [create_task]
+reader_tools = [list_tasks, filter_tasks]
+editor_tools = [update_task, delete_task, list_tasks]
 
-# ─────────────────────────────
-# 3  Conditional routing
-# ─────────────────────────────
-def should_continue(state: TaskState):
-    last_message = state["messages"][-1]
-    return "tools" if last_message.tool_calls else END
+tool_node = ToolNode(all_tools)
 
-# ─────────────────────────────
-# 4  Agent call with memory
-# ─────────────────────────────
-def call_model(state: TaskState):
-    messages = state["messages"]
-
-    mem = state.get("memory", "")
-    today = datetime.now().strftime("%Y-%m-%d")
+# ── Message trimming ──
+MAX_HISTORY = 6
 
 
-    system_message = SystemMessage(content=f"""
-    You are **TaskMate**, an intelligent Task-Management AI specialized in natural language understanding and **smart task consolidation**.
-    **Current Date**: {today}
-    **Today's Date**: {today}
-    **Memory context**: {mem}
-
-    ## Core Mission
-        - Parse natural language input to **identify, extract, and intelligently GROUP related tasks** into consolidated, actionable records. 
-        - Instead of creating many individual tasks, create fewer comprehensive tasks that group related items logically.
-
-    ### 1. **Multi-Task Extraction & Smart Grouping**
-        - **Parse complex requests**: Identify ALL items/tasks mentioned in input
-        - **Intelligent consolidation**: Group related items into comprehensive tasks
-        - **Category-based grouping**: Combine items by purpose, location, or context
-        - **Preserve details**: Include all individual items in task descriptions
-        - **Logical task titles**: Create meaningful titles that encompass all related items
-    
-    ## Available Tools (unchanged)
-        - `create_task(title, description="", priority="medium", due_date="")`
-        - `list_tasks(status=None)`
-        - `update_task(task_id, status=None, title=None, description=None, priority=None, due_date=None)`
-        - `delete_task(task_id)`
-        - `filter_tasks(priority=None, status=None)`
-        - `check_duplicate(title)`
-    
-    ---
-    When creating tasks:
-        - Generate a **short, crisp title** (≈4–6 words) that captures the main goal.
-        - Move all other specifics—items, reasons, timing—into the **description**.
-        - Generate short deescription (≈1–2 sentences) that captures all specifics.
-        - Parse natural-language dates (e.g. "tomorrow", "next Monday") into ISO format (YYYY-MM-DD).
-        - Default priority to MEDIUM unless the user specifies otherwise.
-        - Before creating, check for near-duplicate tasks (title+description+due_date window) and confirm with user.
-        - If user insists “create new anyway”, allow creation with a suffix like “(2)”.
-        - If user provides no due date, leave due_date NULL (no deadline).
-        - If user provides a date without time, set time to 23:59:59.
-        - For shopping lists or multi-item tasks, create a parent task and a checklist
-        of individual items. When the user reports finishing some items, mark only
-        those checklist items completed rather than rewriting the description.
+def _trim(messages):
+    if len(messages) <= MAX_HISTORY:
+        return list(messages)
+    return list(messages[-MAX_HISTORY:])
 
 
-    ## Core Capabilities & Response Protocol
+# ── Supervisor ──
+supervisor_llm = ChatGroq(
+    model="llama-3.3-70b-versatile",
+    api_key=os.getenv("GROQ_API_KEY"),
+    temperature=0,
+)
 
-    ### 1. **Task Identification & Extraction**
-        - **Pattern Recognition**: Detect task-related phrases:
-        - "I need to...", "Remind me to...", "Add a task for..."
-        - "Buy/Get/Pick up [items]", "Complete [activity] by [time]"
-        - Action verbs: buy, complete, finish, schedule, prepare, etc.
-        - **Multiple Tasks**: Identify and separate multiple tasks in one message.
-        - **Don't show the user the task_id.**
-        - Examples:
-            - "Buy groceries (fish, chicken, rice, spices) next Monday and also pick up a suit and shoes for the wedding."
-            - "Finish the report by EOD today and schedule a meeting with the team."
-            - "Remind me to call mom tomorrow and book a dentist appointment next week."
-            - "Get milk, eggs, and bread when you can, and also order a new laptop by Friday."
-        - **Entity Extraction**: Parse from natural language:
-        - **Title**: Main action ("buy groceries")
-        - **Description**: Specific details ("fish, chicken, rice, spices")
-        - **Due Date**: Convert natural time to ISO format:
-            - "next Monday" → calculate actual date
-            - "EOD today" → {today}T23:59:59
-            - "by Friday" → calculate upcoming Friday
-        - **Priority**: Detect urgency cues:
-            - "urgent", "ASAP", "important" → high
-            - "when you can", "sometime" → low
-            - Default: medium
-        
-    ### Read / Update / Delete Protocol
-        - Never require task_id from the user.
-        - For update/delete:
-            - When the user says “I finished this/today’s task”:
-                – If only one match: update immediately.
-                – If multiple matches: show a numbered list and ask which to mark.
-                – Always confirm action before calling update_task or delete_task.
-            – Parse natural language for clues (title fragments, due date, priority).
-            – Call list_tasks() and run fuzzy match on title+description.
-            – If multiple candidates, present a numbered list and ask which to act on.
-            – After user confirms, call the tool with that id.
-            - User never provides a raw task_id.
-        - For reading:
-            - Accept natural queries like “today”, “this week”, “overdue”, “high priority”.
-            - If user just says “show my tasks”:
-                – list_tasks() with no filter and show all inprogress tasks.
-            
-    ### 2. **Duplicate Prevention & Smart Matching**
-        - **Before Creation**: Call `list_tasks()` and perform fuzzy matching (≥0.7 similarity)
-        - **If duplicate exists**: "I found a similar task: '[existing task]'. Would you like to update it instead?"
-        - **Multiple matches**: List options and ask for clarification
-        - **Pronoun Resolution**: Use conversation context to resolve "it", "that task", etc.
-        - **Fuzzy Matching**: Use sequence matching to identify similar tasks
-        - **Example**: "I completed all today's tasks" → find tasks with today's date and mark as completed
-        - **Confirmation Protocol**: Always confirm actions before tool calls
-        - **Error Handling**: If no tasks found for update/delete, inform the user clearly.
-        - "I couldn't find a task matching that description. Please check and try again."
 
-    ### 3. **Natural Language Understanding**
-        - **Temporal Expressions**: Convert to ISO format immediately:
-        "today" → {today} if no time mentioned, then time as 23:59:59
-        "tomorrow" → {(datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")} if no time mentioned, then time as 23:59:59
-        "next Monday" → calculate next Monday if no time mentioned, then time as 23:59:59
-        "EOD" → end of day (23:59:59)
-        - "by Friday" → calculate upcoming Friday if no time mentioned, then time as 23:59:59
-        - "in 3 days" → current date + 3 days if no time mentioned, then time as 23:59:59
-        - **Context Awareness**: Use conversation history for pronouns and references
-        - "it", "that task", "the one about groceries" → resolve using memory
-        - **Fuzzy Matching**: Identify similar tasks using sequence matching (threshold ≥0.7)
-        - **Example**: "I completed all today's tasks" → find tasks with today's date and mark as completed
-        - **Confirmation Protocol**: Always confirm actions before tool calls
-        - **Error Handling**: If no tasks found for update/delete, inform the user clearly.
-        - **if no time mentioned in due date, then time as 23:59:59.**
-        - **if task id is not provided for update or delete, then you use title, description, priority and due date to find the task dont ask the user. If multiple tasks found, then ask the user to clarify which one to update or delete.**
-    
-    ## Duplicate & ID-Free Handling
-        - Always call list_tasks() first and run fuzzy match (≥0.7) on
-        (title + description + due_date ±1 day).
-        - If one or more matches are found:
-            – Present a numbered list of matches with id, title, due_date, status.
-            – Ask: “Update/merge one of these or create a brand-new task?”
-        - Only create a new task after explicit confirmation, otherwise
-        update the existing one.
-    
-    ## fetching tasks
-        - Accept natural queries like “today”, “this week”, “overdue”, “high priority”, "today's" -> today, "todays" -> today.
-        - If user just says “show my tasks”:
-            – list_tasks() with no filter and show all inprogress tasks.
-            - pending / incomplete / not started → inprogress
-            - completed / done / finished → completed
-            - overdue / missed → overdue
-            - archived / old → archived
-            - high priority / urgent → high
-            - medium priority / normal → medium
-            - low priority / whenever → low
-    
-    ## Key Improvements:
+def supervisor_node(state: AgentState):
+    """Classify user intent → route to correct agent."""
+    system = SystemMessage(content="""Classify the user's intent into exactly ONE word:
+- "creator" — user wants to ADD/CREATE a new task
+- "reader" — user wants to VIEW/LIST/SHOW/FILTER tasks
+- "editor" — user wants to UPDATE/DELETE/COMPLETE/ARCHIVE/REOPEN a task
+Respond with ONLY: creator, reader, or editor""")
 
-        1. **ISO Date Enforcement**: Explicit conversion rules and examples
-        2. **Better Entity Extraction**: Pattern recognition for shopping lists and multiple tasks
-        3. **Multiple Task Handling**: Ability to parse and create multiple tasks from single message
-        4. **Context Awareness**: Improved pronoun resolution and fuzzy matching
-        5. **Clear Response Protocol**: Structured confirmation messages
-        6. **Error Prevention**: Duplicate checking and validation before tool calls
-        7. **Temporal Intelligence**: Smart date calculation from natural language
-        8. **Concise Titles & Rich Descriptions**: Clear guidelines for task structuring
-        9. **time in due date**: If no time mentioned in due date, then time as 23:59:59.
+    msgs = state["messages"]
+    response = supervisor_llm.invoke([system] + msgs[-2:])
+    route = response.content.strip().lower()
 
-    This prompt will now properly handle your test case by:
-        - Recognizing it contains multiple tasks
-        - Converting "next Monday" and "EOD" to proper ISO dates
-        - Creating separate tasks with appropriate metadata
-        - Providing clear confirmation messages
-        - Storing everything correctly in the database table
-        - Dont ask the user for title, description, priority or due date unless it is not clear from the context.
-        - If no time mentioned in due date, then time as 23:59:59.
-    """)
-    response = llm_with_tools.invoke([system_message] + messages)
+    if route not in ("creator", "reader", "editor"):
+        last_msg = msgs[-1].content.lower() if msgs else ""
+        if any(w in last_msg for w in ("create", "add", "new", "buy", "remind", "schedule")):
+            route = "creator"
+        elif any(w in last_msg for w in ("show", "list", "display", "filter", "what", "view")):
+            route = "reader"
+        else:
+            route = "editor"
 
-    # Update memory for context in future turns
-    user_utterance = messages[-1].content if messages else ""
-    state["memory"] = (
-        f"{mem}\nUser: {user_utterance}\nAssistant: {getattr(response,'content','')}"
-    )
-    return {"messages": [response], "memory": state["memory"]}
+    return {"next_agent": route, "active_agent": "supervisor"}
 
-# ─────────────────────────────
-# 5  Build the graph
-# ─────────────────────────────
-workflow = StateGraph(TaskState)
-workflow.add_node("agent", call_model)
+
+def route_after_supervisor(state: AgentState):
+    return state.get("next_agent", "creator")
+
+
+# ── Creator Agent ──
+creator_llm = llm.bind_tools(creator_tools)
+
+# Relative-time patterns the LLM tends to mis-calculate
+_REL_TIME_PATTERNS = [
+    # "within 30 minutes", "in 1 hour", "in 2 hours", "within 2 hrs"
+    (re.compile(r"(?:within|in)\s+(\d+(?:\.\d+)?)\s+hours?", re.I), "hours"),
+    (re.compile(r"(?:within|in)\s+(\d+(?:\.\d+)?)\s+(?:minutes?|mins?)", re.I), "minutes"),
+]
+
+
+def _resolve_relative_deadline(user_text: str, now: datetime) -> str | None:
+    """Return a pre-computed ISO due_date string for relative time expressions, or None."""
+    for pattern, unit in _REL_TIME_PATTERNS:
+        m = pattern.search(user_text)
+        if m:
+            amount = float(m.group(1))
+            if unit == "hours":
+                deadline = now + timedelta(hours=amount)
+            else:
+                deadline = now + timedelta(minutes=amount)
+            return deadline.strftime("%Y-%m-%dT%H:%M:%S")
+    return None
+
+
+
+def creator_node(state: AgentState):
+    now = datetime.now()
+    today = now.strftime("%Y-%m-%d")
+    day_name = now.strftime("%A")
+    current_time = now.strftime("%H:%M:%S")
+    current_iso = now.strftime("%Y-%m-%dT%H:%M:%S")
+    tomorrow = (now + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    day_map = {}
+    for i in range(1, 8):
+        d = now + timedelta(days=i)
+        day_map[d.strftime("%A")] = d.strftime("%Y-%m-%d")
+    date_ref = ", ".join(f"{k}={v}" for k, v in day_map.items())
+
+    # Pre-compute relative deadline in Python so the LLM never has to do math
+    messages = _trim(state["messages"])
+    last_user_text = ""
+    for msg in reversed(messages):
+        if hasattr(msg, "type") and msg.type == "human":
+            last_user_text = msg.content
+            break
+
+    precomputed_due = _resolve_relative_deadline(last_user_text, now)
+    if precomputed_due:
+        due_date_instruction = (
+            f"IMPORTANT: The user said '{last_user_text}'. "
+            f"The pre-computed due_date is exactly: {precomputed_due}. "
+            f"You MUST use due_date='{precomputed_due}' — do not calculate or change it."
+        )
+    else:
+        due_date_instruction = (
+            "DUE DATE RULES:\n"
+            f"- Specific time today ('by 5pm', 'at 18:00'): use today={today}T<time>.\n"
+            f"- Day name ('Friday', 'next Monday'): use DATE REFERENCE above + T23:59:59.\n"
+            "- No due date mentioned: omit due_date entirely."
+        )
+
+    system = SystemMessage(content=f"""You are the Creator Agent of TaskMate. Today is {day_name}, {today}. Current time is {current_time}.
+DATE REFERENCE: today={today}, tomorrow={tomorrow}, {date_ref}
+
+RULES:
+- Create EXACTLY ONE task per request. Never create multiple tasks.
+- Call create_task ONCE, then STOP. Do NOT call it again.
+- Title: 4-6 words max. Description: 1 sentence.
+- Priority: urgent=high, whenever=low, default=medium.
+- After calling create_task, respond with a brief confirmation. Do NOT create more tasks.
+
+{due_date_instruction}""")
+
+    response = creator_llm.invoke([system] + messages)
+    return {"messages": [response], "active_agent": "creator"}
+
+
+# ── Reader Agent ──
+reader_llm = llm.bind_tools(reader_tools)
+
+
+def reader_node(state: AgentState):
+    system = SystemMessage(content="""You are the Reader Agent of TaskMate.
+YOUR ONLY JOB: List and filter tasks. Use list_tasks() or filter_tasks().
+Status: pending=inprogress, done=completed, old=archived.
+Present results clearly with title, status, priority, due date. Never show task_id. Be concise.""")
+
+    messages = _trim(state["messages"])
+    response = reader_llm.invoke([system] + messages)
+    return {"messages": [response], "active_agent": "reader"}
+
+
+# ── Editor Agent ──
+editor_llm = llm.bind_tools(editor_tools)
+
+
+def editor_node(state: AgentState):
+    system = SystemMessage(content="""You are the Editor Agent of TaskMate.
+YOUR ONLY JOB: Update or delete tasks. Always call list_tasks() FIRST to find the task by title.
+Never ask user for task_id. Fuzzy-match by title. If multiple, ask user to pick.
+Status: pending=inprogress, done=completed, missed=overdue, old=archived.
+Resolve pronouns from context. Be concise.""")
+
+    messages = _trim(state["messages"])
+    response = editor_llm.invoke([system] + messages)
+    return {"messages": [response], "active_agent": "editor"}
+
+
+# ── Routing after agent nodes ──
+def should_continue(state: AgentState):
+    """If the last message has tool_calls, go to tools. Otherwise END."""
+    last = state["messages"][-1]
+    if hasattr(last, "tool_calls") and last.tool_calls:
+        return "tools"
+    return END
+
+
+def route_back_from_tools(state: AgentState):
+    """After tools execute, route back to the active agent."""
+    return state.get("active_agent", "creator")
+
+
+# ── Build the flat multi-agent graph ──
+workflow = StateGraph(AgentState)
+
+# Nodes
+workflow.add_node("supervisor", supervisor_node)
+workflow.add_node("creator", creator_node)
+workflow.add_node("reader", reader_node)
+workflow.add_node("editor", editor_node)
 workflow.add_node("tools", tool_node)
 
-workflow.add_edge(START, "agent")
-workflow.add_conditional_edges("agent", should_continue,
-                               {"tools": "tools", END: END})
-workflow.add_edge("tools", "agent")
+# Edges
+workflow.add_edge(START, "supervisor")
+workflow.add_conditional_edges("supervisor", route_after_supervisor, {
+    "creator": "creator",
+    "reader": "reader",
+    "editor": "editor",
+})
+
+# Each agent → tools or END
+for agent in ("creator", "reader", "editor"):
+    workflow.add_conditional_edges(agent, should_continue, {
+        "tools": "tools",
+        END: END,
+    })
+
+# Tools → back to the calling agent
+workflow.add_conditional_edges("tools", route_back_from_tools, {
+    "creator": "creator",
+    "reader": "reader",
+    "editor": "editor",
+})
 
 graph = workflow.compile()
+
+# Backward compat
+TaskState = AgentState

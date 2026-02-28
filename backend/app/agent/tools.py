@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.task import Task, TaskStatus, TaskPriority
 from app.database.connection import AsyncSessionLocal
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 from difflib import SequenceMatcher
 
 
@@ -13,7 +13,7 @@ async def create_task(
     title: str,
     description: str = "",
     priority: str = "medium",
-    due_date: str = None,
+    due_date: Optional[str] = None,
 ) -> str:
     """Create a new task with title, description, priority, and optional due_date."""
     async with AsyncSessionLocal() as db:
@@ -30,7 +30,7 @@ async def create_task(
             db.add(task)
             await db.commit()
             await db.refresh(task)  # we need the id
-            return f"Task '{title}' created successfully with ID {task.id}"
+            return f"Task '{title}' created successfully"
         except Exception as e:
             return f"Error creating task: {str(e)}"
 
