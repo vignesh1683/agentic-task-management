@@ -26,7 +26,8 @@ export default function HomePage() {
     }
 
     setConnectionStatus('reconnecting');
-    const websocket = new WebSocket(`ws://localhost:8000/ws/chat`);
+    const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws/chat';
+    const websocket = new WebSocket(wsUrl);
     wsRef.current = websocket;
 
     websocket.onopen = () => {
